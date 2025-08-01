@@ -26,9 +26,9 @@ export const useContractDeployment = (signer) => {
 
     try {
       // Use custom args if provided, otherwise use default constructor args
-      const constructorArgs = customArgs || config.constructorArgs;
+      const finalConstructorArgs = customArgs !== null ? customArgs : config.constructorArgs;
       
-      console.log(`Deploying ${contractType} contract with args:`, constructorArgs);
+      console.log(`Deploying ${contractType} contract with final args:`, finalConstructorArgs);
 
       // Create contract factory
       const factory = new ethers.ContractFactory(config.abi, config.bytecode, signer);
@@ -36,7 +36,7 @@ export const useContractDeployment = (signer) => {
       setDeploymentStatus({ type: 'pending', message: 'Please confirm deployment in MetaMask...' });
 
       // Deploy contract
-      const contract = await factory.deploy(...constructorArgs, {
+      const contract = await factory.deploy(...finalConstructorArgs, {
         gasLimit: 2000000 // Set a reasonable gas limit
       });
 
