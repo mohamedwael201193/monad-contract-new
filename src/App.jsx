@@ -1,24 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from './components/ui/card';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
 import { Label } from './components/ui/label';
 import { Badge } from './components/ui/badge';
 import { Alert, AlertDescription } from './components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
-import { 
-  Wallet, 
-  Plus, 
-  Activity, 
-  Hash, 
-  MessageSquare, 
-  Coins, 
-  Eye, 
-  Minus, 
-  RotateCcw, 
-  Edit, 
-  Trash2 
+import {
+  Wallet,
+  Plus,
+  Activity,
+  Hash,
+  MessageSquare,
+  Coins,
+  Eye,
+  Minus,
+  RotateCcw,
+  Edit,
+  Trash2
 } from 'lucide-react';
 import { COUNTER_ABI, MESSAGE_STORAGE_ABI, SIMPLE_TOKEN_ABI } from './contracts/contractABIs';
 
@@ -36,155 +36,223 @@ const MONAD_TESTNET = {
 };
 
 function App() {
-  const [account, setAccount] = useState('');
+  const [account, setAccount] = useState(null);
   const [balance, setBalance] = useState('0');
-  const [provider, setProvider] = useState(null);
-  const [signer, setSigner] = useState(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [error, setError] = useState(null);
   const [deployedContracts, setDeployedContracts] = useState([]);
   const [contractsDeployed, setContractsDeployed] = useState(0);
   const [totalInteractions, setTotalInteractions] = useState(0);
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [error, setError] = useState('');
 
-  // Connect to MetaMask
-  const connectWallet = async () => {
-    if (!window.ethereum) {
-      setError('MetaMask is not installed. Please install MetaMask to continue.');
-      return;
+  useEffect(() => {
+    if (window.ethereum) {
+      window.ethereum.on('accountsChanged', handleAccountsChanged);
+      window.ethereum.on('chainChanged', handleChainChanged);
+      // Initial check for connected accounts and chain
+      checkWalletConnection();
     }
-
-    setIsConnecting(true);
-    setError('');
-
-    try {
-      // Request account access
-      const accounts = await window.ethereum.request({
-        method: 'eth_requestAccounts',
-      });
-
-      if (accounts.length === 0) {
-        throw new Error('No accounts found');
+    return () => {
+      if (window.ethereum) {
+        window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
+        window.ethereum.removeListener('chainChanged', handleChainChanged);
       }
+    };
+  }, []);
 
-      // Switch to Monad Testnet
+  const checkWalletConnection = async () => {
+    if (window.ethereum) {
       try {
-        await window.ethereum.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: MONAD_TESTNET.chainId }],
-        });
-      } catch (switchError) {
-        // If the chain doesn't exist, add it
-        if (switchError.code === 4902) {
+        const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+        if (accounts.length > 0) {
+          setAccount(accounts[0]);
+          fetchBalance(accounts[0]);
+          checkNetwork();
+        }
+      } catch (err) {
+        console.error("Error checking accounts:", err);
+      }
+    }
+  };
+
+  const handleAccountsChanged = (accounts) => {
+    if (accounts.length === 0) {
+      setAccount(null);
+      setBalance('0');
+      setDeployedContracts([]);
+      setContractsDeployed(0);
+      setTotalInteractions(0);
+      setError('Please connect to MetaMask.');
+    } else {
+      setAccount(accounts[0]);
+      fetchBalance(accounts[0]);
+      setError(null);
+    }
+  };
+
+  const handleChainChanged = (chainId) => {
+    console.log('Chain changed to:', chainId);
+    if (chainId !== MONAD_TESTNET.chainId) {
+      setError(`Please switch to Monad Testnet (Chain ID: ${parseInt(MONAD_TESTNET.chainId, 16)}).`);
+      setAccount(null); // Disconnect if on wrong network
+    } else {
+      setError(null);
+      checkWalletConnection(); // Re-check connection and fetch data
+    }
+  };
+
+  const checkNetwork = async () => {
+    if (!window.ethereum) return;
+    try {
+      const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
+      if (currentChainId !== MONAD_TESTNET.chainId) {
+        try {
           await window.ethereum.request({
-            method: 'wallet_addEthereumChain',
-            params: [MONAD_TESTNET],
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: MONAD_TESTNET.chainId }],
           });
-        } else {
-          throw switchError;
+          setError(null);
+        } catch (switchError) {
+          // This error code indicates that the chain has not been added to MetaMask.
+          if (switchError.code === 4902) {
+            try {
+              await window.ethereum.request({
+                method: 'wallet_addEthereumChain',
+                params: [
+                  {
+                    chainId: MONAD_TESTNET.chainId,
+                    chainName: MONAD_TESTNET.chainName,
+                    rpcUrls: MONAD_TESTNET.rpcUrls,
+                    nativeCurrency: MONAD_TESTNET.nativeCurrency,
+                    blockExplorerUrls: MONAD_TESTNET.blockExplorerUrls,
+                  },
+                ],
+              });
+              setError(null);
+            } catch (addError) {
+              setError(`Failed to add Monad Testnet to MetaMask: ${addError.message}`);
+            }
+          } else {
+            setError(`Failed to switch to Monad Testnet: ${switchError.message}`);
+          }
         }
       }
-
-      // Set up provider and signer
-      const web3Provider = new ethers.BrowserProvider(window.ethereum);
-      const web3Signer = await web3Provider.getSigner();
-      
-      setProvider(web3Provider);
-      setSigner(web3Signer);
-      setAccount(accounts[0]);
-
-      // Get balance
-      const balance = await web3Provider.getBalance(accounts[0]);
-      setBalance(ethers.formatEther(balance));
-
-    } catch (error) {
-      console.error('Error connecting wallet:', error);
-      setError(error.message || 'Failed to connect wallet');
-    } finally {
-      setIsConnecting(false);
+    } catch (err) {
+      console.error("Error checking network:", err);
+      setError(`Could not check network: ${err.message}`);
     }
   };
 
-  // Disconnect wallet
-  const disconnectWallet = () => {
-    setAccount('');
-    setBalance('0');
-    setProvider(null);
-    setSigner(null);
-    setDeployedContracts([]);
-    setError('');
+  const connectWallet = async () => {
+    if (window.ethereum) {
+      setIsConnecting(true);
+      setError(null);
+      try {
+        await checkNetwork(); // Ensure we are on the correct network first
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        setAccount(accounts[0]);
+        fetchBalance(accounts[0]);
+      } catch (err) {
+        setError(`Failed to connect: ${err.message}`);
+        setAccount(null);
+      } finally {
+        setIsConnecting(false);
+      }
+    } else {
+      setError('MetaMask is not installed. Please install it to use this app.');
+    }
   };
 
-  // Deploy contract
-  const deployContract = async (contractType, params = {}) => {
-    if (!signer) {
-      setError('Please connect your wallet first');
+  const disconnectWallet = () => {
+    setAccount(null);
+    setBalance('0');
+    setDeployedContracts([]);
+    setContractsDeployed(0);
+    setTotalInteractions(0);
+    setError(null);
+  };
+
+  const fetchBalance = async (address) => {
+    if (window.ethereum && address) {
+      try {
+        const provider = new ethers.providers.Web3Provider(window.ethereum);
+        const balanceWei = await provider.getBalance(address);
+        setBalance(ethers.utils.formatEther(balanceWei));
+      } catch (err) {
+        console.error("Error fetching balance:", err);
+        setError(`Failed to fetch balance: ${err.message}`);
+      }
+    }
+  };
+
+  const deployContract = async (contractType, params) => {
+    if (!account) {
+      setError('Please connect your wallet first.');
+      return;
+    }
+    if (!window.ethereum) {
+      setError('MetaMask is not installed.');
       return;
     }
 
     try {
-      setError('');
-      let factory;
-      let contractArgs = [];
+      const provider = new ethers.providers.Web3Provider(window.ethereum);
+      const signer = provider.getSigner();
+
+      let contractFactory;
+      let deployedContract;
+      let contractAddress;
 
       switch (contractType) {
         case 'Counter':
-          // Simple bytecode for Counter contract
-          const counterBytecode = "0x608060405234801561001057600080fd5b50600080556001805433600160a01b0260a01b60ff60a01b19909116179055610267806100406000396000f3fe";
-          factory = new ethers.ContractFactory(COUNTER_ABI, counterBytecode, signer);
+          contractFactory = new ethers.ContractFactory(COUNTER_ABI, '', signer);
+          deployedContract = await contractFactory.deploy();
           break;
         case 'MessageStorage':
-          const messageBytecode = "0x608060405234801561001057600080fd5b506040516107a83803806107a8833981810160405281019061003291906101c2565b80600090805190602001906100489291906100a3565b5033600160006101000a81548173ffffffffffffffffffffffffffffffffffffffff021916908373ffffffffffffffffffffffffffffffffffffffff1602179055506001600281905550506101f3565b8280546100af906101c2565b90600052602060002090601f0160209004810192826100d15760008555610118565b82601f106100ea57805160ff1916838001178555610118565b82800160010185558215610118579182015b828111156101175782518255916020019190600101906100fc565b5b5090506101259190610129565b5090565b5b8082111561014257600081600090555060010161012a565b5090565b600061015961015483610208565b6101e3565b90508281526020810184848401111561017157600080fd5b61017c848285610239565b509392505050565b60008151905061019381610279565b92915050565b600082601f8301126101aa57600080fd5b81516101ba848260208601610146565b91505092915050565b6000602082840312156101d557600080fd5b600082015167ffffffffffffffff8111156101ef57600080fd5b6101fb84828501610199565b91505092915050565b600067ffffffffffffffff82111561021f5761021e61024a565b5b610228826102a1565b9050602081019050919050565b60005b8381101561025357808201518184015260208101905061023a565b83811115610262576000848401525b50505050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052604160045260246000fd5b6000601f19601f8301169050919050565b61028281610279565b811461028d57600080fd5b5056fe";
-          factory = new ethers.ContractFactory(MESSAGE_STORAGE_ABI, messageBytecode, signer);
-          contractArgs = [params.initialMessage || "Hello World"];
+          contractFactory = new ethers.ContractFactory(MESSAGE_STORAGE_ABI, '', signer);
+          deployedContract = await contractFactory.deploy(params.initialMessage || '');
           break;
         case 'SimpleToken':
-          const tokenBytecode = "0x608060405234801561001057600080fd5b506040516107a83803806107a8833981810160405281019061003291906101c2565b80600090805190602001906100489291906100a3565b5033600160006101000a81548173ffffffffffffffffffffffffffffffffffffffff021916908373ffffffffffffffffffffffffffffffffffffffff1602179055506001600281905550506101f3565b";
-          factory = new ethers.ContractFactory(SIMPLE_TOKEN_ABI, tokenBytecode, signer);
-          contractArgs = [
-            params.name || "MyToken",
-            params.symbol || "MTK", 
-            params.decimals || 18,
-            params.initialSupply || 1000
-          ];
+          contractFactory = new ethers.ContractFactory(SIMPLE_TOKEN_ABI, '', signer);
+          deployedContract = await contractFactory.deploy(
+            params.name || 'MyToken',
+            params.symbol || 'MTK',
+            18, // Decimals
+            ethers.utils.parseUnits(params.initialSupply || '0', 18) // Initial Supply
+          );
           break;
         default:
           throw new Error('Unknown contract type');
       }
 
-      const contract = await factory.deploy(...contractArgs);
-      await contract.waitForDeployment();
-      
-      const contractAddress = await contract.getAddress();
-      
-      const newContract = {
-        type: contractType,
-        address: contractAddress,
-        contract: contract,
-        deployedAt: new Date().toISOString()
-      };
+      await deployedContract.deployed();
+      contractAddress = deployedContract.address;
 
-      setDeployedContracts(prev => [...prev, newContract]);
+      setDeployedContracts(prev => [...prev, { type: contractType, address: contractAddress }]);
       setContractsDeployed(prev => prev + 1);
-      
+      setError(null);
       return contractAddress;
     } catch (error) {
-      console.error('Error deploying contract:', error);
-      setError(error.message || 'Failed to deploy contract');
+      setError(`Deployment failed: ${error.message}`);
+      console.error('Deployment error:', error);
       throw error;
     }
   };
 
-  // Interact with contract
-  const interactWithContract = async (contractAddress, contractType, method, params = []) => {
-    if (!signer) {
-      setError('Please connect your wallet first');
+  const interactWithContract = async (address, contractType, method, params = []) => {
+    if (!account) {
+      setError('Please connect your wallet first.');
+      return;
+    }
+    if (!window.ethereum) {
+      setError('MetaMask is not installed.');
       return;
     }
 
     try {
-      setError('');
+      const provider = new ethers.providers.Web3Provider(window.ethereum);
+      const signer = provider.getSigner();
+
       let abi;
-      
       switch (contractType) {
         case 'Counter':
           abi = COUNTER_ABI;
@@ -199,24 +267,30 @@ function App() {
           throw new Error('Unknown contract type');
       }
 
-      const contract = new ethers.Contract(contractAddress, abi, signer);
-      
+      const contract = new ethers.Contract(address, abi, signer);
       let result;
-      if (method === 'getCount' || method === 'getMessage' || method === 'balanceOf') {
-        // Read-only methods
-        result = await contract[method](...params);
+
+      if (method === 'mint' && contractType === 'SimpleToken') {
+        // Special handling for mint function which takes recipient and amount
+        const [recipient, amount] = params;
+        result = await contract[method](recipient, ethers.utils.parseUnits(amount, 18));
       } else {
-        // Write methods
-        const tx = await contract[method](...params);
-        await tx.wait();
-        result = tx.hash;
-        setTotalInteractions(prev => prev + 1);
+        result = await contract[method](...params);
       }
-      
-      return result;
+
+      // If it's a transaction (write method), wait for it to be mined
+      if (result && typeof result.wait === 'function') {
+        await result.wait();
+        setTotalInteractions(prev => prev + 1);
+        return 'Transaction successful!';
+      } else {
+        // If it's a read method, return the result directly
+        setTotalInteractions(prev => prev + 1);
+        return result;
+      }
     } catch (error) {
-      console.error('Error interacting with contract:', error);
-      setError(error.message || 'Failed to interact with contract');
+      setError(`Interaction failed: ${error.message}`);
+      console.error('Interaction error:', error);
       throw error;
     }
   };
@@ -678,7 +752,7 @@ function ContractInteraction({ contracts, onInteract }) {
           <CardContent>
             <ContractMethods
               contractType={selectedContract.type}
-              onInteract={handleInteraction}
+              onInteract={interactWithContract}
               isInteracting={isInteracting}
             />
             
@@ -895,4 +969,5 @@ function ContractMethods({ contractType, onInteract, isInteracting }) {
 }
 
 export default App;
+
 
