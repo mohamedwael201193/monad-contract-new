@@ -33,11 +33,25 @@ export const useContractDeployment = (signer) => {
       // Create contract factory
       const factory = new ethers.ContractFactory(config.abi, config.bytecode, signer);
       
+      // Estimate gas for deployment
+      let estimatedGasLimit;
+      try {
+        const deployTx = await factory.getDeployTransaction(...finalConstructorArgs);
+        estimatedGasLimit = await signer.estimateGas(deployTx);
+        console.log(`Estimated gas for ${contractType} deployment:`, estimatedGasLimit.toString());
+        // Add a buffer to the estimated gas
+        estimatedGasLimit = estimatedGasLimit * 120n / 100n; // Add 20% buffer
+        console.log(`Adjusted gas limit with buffer:`, estimatedGasLimit.toString());
+      } catch (gasError) {
+        console.warn(`Failed to estimate gas for ${contractType} deployment, using default. Error:`, gasError);
+        estimatedGasLimit = 5000000n; // Fallback to a higher default if estimation fails
+      }
+
       setDeploymentStatus({ type: 'pending', message: 'Please confirm deployment in MetaMask...' });
 
       // Deploy contract
       const contract = await factory.deploy(...finalConstructorArgs, {
-        gasLimit: 2000000 // Set a reasonable gas limit
+        gasLimit: estimatedGasLimit
       });
 
       setDeploymentStatus({ 
