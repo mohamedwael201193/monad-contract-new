@@ -66,7 +66,7 @@ function App() {
         if (accounts.length > 0) {
           setAccount(accounts[0]);
           fetchBalance(accounts[0]);
-          checkNetwork();
+          await checkNetwork(); // Ensure network is correct on initial load
         }
       } catch (err) {
         console.error("Error checking accounts:", err);
@@ -75,6 +75,7 @@ function App() {
   };
 
   const handleAccountsChanged = (accounts) => {
+    console.log('Accounts changed:', accounts);
     if (accounts.length === 0) {
       setAccount(null);
       setBalance('0');
@@ -89,56 +90,79 @@ function App() {
     }
   };
 
-  const handleChainChanged = (chainId) => {
+  const handleChainChanged = async (chainId) => {
     console.log('Chain changed to:', chainId);
     if (chainId !== MONAD_TESTNET.chainId) {
       setError(`Please switch to Monad Testnet (Chain ID: ${parseInt(MONAD_TESTNET.chainId, 16)}).`);
       setAccount(null); // Disconnect if on wrong network
+      try {
+        await switchNetwork(); // Attempt to switch automatically
+      } catch (err) {
+        console.error("Error during automatic network switch:", err);
+      }
     } else {
       setError(null);
       checkWalletConnection(); // Re-check connection and fetch data
     }
   };
 
-  const checkNetwork = async () => {
-    if (!window.ethereum) return;
+  const switchNetwork = async () => {
+    console.log('Attempting to switch network to:', MONAD_TESTNET.chainId);
     try {
-      const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
-      if (currentChainId !== MONAD_TESTNET.chainId) {
+      await window.ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: MONAD_TESTNET.chainId }],
+      });
+      console.log('Successfully switched to Monad Testnet.');
+      setError(null);
+    } catch (switchError) {
+      console.error('Error switching network:', switchError);
+      // This error code indicates that the chain has not been added to MetaMask.
+      if (switchError.code === 4902) {
+        console.log('Monad Testnet not found, attempting to add it.');
         try {
           await window.ethereum.request({
-            method: 'wallet_switchEthereumChain',
-            params: [{ chainId: MONAD_TESTNET.chainId }],
+            method: 'wallet_addEthereumChain',
+            params: [
+              {
+                chainId: MONAD_TESTNET.chainId,
+                chainName: MONAD_TESTNET.chainName,
+                rpcUrls: MONAD_TESTNET.rpcUrls,
+                nativeCurrency: MONAD_TESTNET.nativeCurrency,
+                blockExplorerUrls: MONAD_TESTNET.blockExplorerUrls,
+              },
+            ],
           });
+          console.log('Successfully added Monad Testnet.');
           setError(null);
-        } catch (switchError) {
-          // This error code indicates that the chain has not been added to MetaMask.
-          if (switchError.code === 4902) {
-            try {
-              await window.ethereum.request({
-                method: 'wallet_addEthereumChain',
-                params: [
-                  {
-                    chainId: MONAD_TESTNET.chainId,
-                    chainName: MONAD_TESTNET.chainName,
-                    rpcUrls: MONAD_TESTNET.rpcUrls,
-                    nativeCurrency: MONAD_TESTNET.nativeCurrency,
-                    blockExplorerUrls: MONAD_TESTNET.blockExplorerUrls,
-                  },
-                ],
-              });
-              setError(null);
-            } catch (addError) {
-              setError(`Failed to add Monad Testnet to MetaMask: ${addError.message}`);
-            }
-          } else {
-            setError(`Failed to switch to Monad Testnet: ${switchError.message}`);
-          }
+        } catch (addError) {
+          console.error('Error adding Monad Testnet:', addError);
+          setError(`Failed to add Monad Testnet to MetaMask: ${addError.message}`);
+          throw addError; // Re-throw to propagate the error
         }
+      } else {
+        setError(`Failed to switch to Monad Testnet: ${switchError.message}`);
+        throw switchError; // Re-throw to propagate the error
+      }
+    }
+  };
+
+  const checkNetwork = async () => {
+    if (!window.ethereum) return;
+    console.log('Checking current network...');
+    try {
+      const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
+      console.log('Current Chain ID from MetaMask:', currentChainId);
+      if (currentChainId !== MONAD_TESTNET.chainId) {
+        console.log('Chain ID mismatch. Attempting to switch/add network.');
+        await switchNetwork();
+      } else {
+        console.log('Chain ID matches Monad Testnet.');
       }
     } catch (err) {
       console.error("Error checking network:", err);
       setError(`Could not check network: ${err.message}`);
+      throw err; // Re-throw to propagate the error
     }
   };
 
@@ -149,6 +173,7 @@ function App() {
       try {
         await checkNetwork(); // Ensure we are on the correct network first
         const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        console.log('Connected accounts:', accounts);
         setAccount(accounts[0]);
         fetchBalance(accounts[0]);
       } catch (err) {
@@ -169,14 +194,16 @@ function App() {
     setContractsDeployed(0);
     setTotalInteractions(0);
     setError(null);
+    console.log('Wallet disconnected.');
   };
 
   const fetchBalance = async (address) => {
     if (window.ethereum && address) {
       try {
-        const provider = new ethers.providers.Web3Provider(window.ethereum);
+        const provider = new ethers.BrowserProvider(window.ethereum);
         const balanceWei = await provider.getBalance(address);
         setBalance(ethers.utils.formatEther(balanceWei));
+        console.log(`Fetched balance for ${address}: ${ethers.utils.formatEther(balanceWei)} MON`);
       } catch (err) {
         console.error("Error fetching balance:", err);
         setError(`Failed to fetch balance: ${err.message}`);
@@ -195,7 +222,7 @@ function App() {
     }
 
     try {
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
+      const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = provider.getSigner();
 
       let contractFactory;
@@ -230,6 +257,7 @@ function App() {
       setDeployedContracts(prev => [...prev, { type: contractType, address: contractAddress }]);
       setContractsDeployed(prev => prev + 1);
       setError(null);
+      console.log(`Contract ${contractType} deployed at: ${contractAddress}`);
       return contractAddress;
     } catch (error) {
       setError(`Deployment failed: ${error.message}`);
@@ -249,7 +277,7 @@ function App() {
     }
 
     try {
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
+      const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = provider.getSigner();
 
       let abi;
@@ -282,10 +310,12 @@ function App() {
       if (result && typeof result.wait === 'function') {
         await result.wait();
         setTotalInteractions(prev => prev + 1);
+        console.log(`Transaction for ${method} completed.`);
         return 'Transaction successful!';
       } else {
         // If it's a read method, return the result directly
         setTotalInteractions(prev => prev + 1);
+        console.log(`Read method ${method} result:`, result);
         return result;
       }
     } catch (error) {
