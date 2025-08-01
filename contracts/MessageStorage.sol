@@ -9,8 +9,8 @@ contract MessageStorage {
     event MessageSet(string newMessage, address indexed setter, uint256 messageNumber);
     event MessageCleared(address indexed clearer);
     
-    constructor(string memory _initialMessage) {
-        message = _initialMessage;
+    constructor() {
+        message = "Initial Message"; // Set a default message
         owner = msg.sender;
         messageCount = 1;
     }

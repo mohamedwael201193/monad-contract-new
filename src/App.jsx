@@ -30,10 +30,7 @@ function App() {
     isDeploying,
     deploymentCount,
     deployCounter,
-    deployMessageStorage,
-    deploySimpleToken,
-    removeContract,
-    clearAllContracts
+    clearStatus
   } = useContractDeployment(signer);
 
   const {
@@ -43,33 +40,33 @@ function App() {
     incrementCounter,
     decrementCounter,
     resetCounter,
-    setMessage,
-    clearMessage,
-    mintTokens,
-    burnTokens,
-    transferTokens,
-    getContractState,
-    updateContractState,
-    refreshAllStates
+    clearInteractionStatus
   } = useContractInteraction(signer);
 
-  // Update contract states when contracts are deployed
+  // Auto-connect wallet on page load
   useEffect(() => {
-    if (deployedContracts.length > 0 && signer) {
-      deployedContracts.forEach(contract => {
-        updateContractState(contract);
-      });
+    if (window.ethereum) {
+      connectWallet();
     }
-  }, [deployedContracts, signer, updateContractState]);
+  }, [connectWallet]);
 
-  const handleRefreshAll = async () => {
-    await refreshAllStates(deployedContracts);
+  // Update balance when account changes
+  useEffect(() => {
+    if (isConnected && account) {
+      updateBalance();
+    }
+  }, [isConnected, account, updateBalance]);
+
+  const handleDeployCounter = async () => {
+    const result = await deployCounter();
+    if (result && isConnected) {
+      // Update balance after deployment
+      setTimeout(() => updateBalance(), 2000);
+    }
   };
 
-  const currentStatus = deploymentStatus || interactionStatus;
-
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       <div className="container mx-auto px-4 py-8">
         {/* Header */}
         <div className="text-center mb-8">
@@ -81,45 +78,37 @@ function App() {
           </p>
         </div>
 
-        {/* Status Alert */}
-        {currentStatus && (
-          <div className="mb-6">
-            <Alert variant={currentStatus.type === 'error' ? 'destructive' : 'default'}>
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{currentStatus.message}</AlertDescription>
-            </Alert>
-          </div>
+        {/* Wallet Error Alert */}
+        {walletError && (
+          <Alert className="mb-6 border-red-200 bg-red-50">
+            <AlertCircle className="h-4 w-4 text-red-600" />
+            <AlertDescription className="text-red-800">
+              {walletError}
+            </AlertDescription>
+          </Alert>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Column - Wallet & Stats */}
-          <div className="space-y-6">
+        {/* Main Content */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Left Column - Wallet & Deployment */}
+          <div className="lg:col-span-1 space-y-6">
             <WalletInfo
               account={account}
               balance={balance}
               isConnected={isConnected}
               isConnecting={isConnecting}
-              error={walletError}
               onConnect={connectWallet}
               onDisconnect={disconnectWallet}
-              onRefreshBalance={updateBalance}
             />
-            
+
             <StatsCard
               deploymentCount={deploymentCount}
               interactionCount={interactionCount}
-              deployedContracts={deployedContracts}
-              onClearAll={clearAllContracts}
-              onRefreshAll={handleRefreshAll}
+              contractsDeployed={deployedContracts.length}
             />
-          </div>
 
-          {/* Middle Column - Contract Deployment */}
-          <div>
             <ContractDeployment
-              onDeployCounter={deployCounter}
-              onDeployMessageStorage={deployMessageStorage}
-              onDeploySimpleToken={deploySimpleToken}
+              onDeployCounter={handleDeployCounter}
               deploymentStatus={deploymentStatus}
               isDeploying={isDeploying}
               isConnected={isConnected}
@@ -128,50 +117,54 @@ function App() {
           </div>
 
           {/* Right Column - Deployed Contracts */}
-          <div className="space-y-6">
-            {deployedContracts.length > 0 ? (
-              <>
-                <div className="text-lg font-semibold text-gray-900">
+          <div className="lg:col-span-2">
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-bold text-gray-900">
                   Deployed Contracts ({deployedContracts.length})
-                </div>
-                {deployedContracts.map((contract) => (
-                  <ContractCard
-                    key={contract.id}
-                    contract={contract}
-                    contractState={getContractState(contract.id)}
-                    onIncrement={incrementCounter}
-                    onDecrement={decrementCounter}
-                    onReset={resetCounter}
-                    onSetMessage={setMessage}
-                    onClearMessage={clearMessage}
-                    onMintTokens={mintTokens}
-                    onBurnTokens={burnTokens}
-                    onTransferTokens={transferTokens}
-                    onRemove={removeContract}
-                    onUpdateState={updateContractState}
-                    isInteracting={isInteracting}
-                    userAddress={account}
-                  />
-                ))}
-              </>
-            ) : (
-              <div className="text-center py-12 text-gray-500">
-                <div className="text-lg font-medium mb-2">No contracts deployed</div>
-                <div className="text-sm">
-                  Deploy your first contract using the form on the left
-                </div>
+                </h2>
               </div>
-            )}
+
+              {deployedContracts.length === 0 ? (
+                <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
+                  <div className="text-gray-500">
+                    <AlertCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                    <p className="text-lg font-medium mb-2">No contracts deployed yet</p>
+                    <p className="text-sm">Deploy your first Counter contract to get started!</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {deployedContracts.map((contract) => (
+                    <ContractCard
+                      key={contract.id}
+                      contract={contract}
+                      onIncrement={() => incrementCounter(contract.contract)}
+                      onDecrement={() => decrementCounter(contract.contract)}
+                      onReset={() => resetCounter(contract.contract)}
+                      interactionStatus={interactionStatus}
+                      isInteracting={isInteracting}
+                      isConnected={isConnected}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="mt-12 text-center text-sm text-gray-500">
+        <div className="mt-12 text-center text-gray-500 text-sm">
           <p>
-            Built with React + Vite + Tailwind CSS • Smart Contracts on Monad Testnet
-          </p>
-          <p className="mt-1">
-            Connect your wallet and deploy contracts to get started!
+            Built for Monad Testnet • Chain ID: 10143 • 
+            <a 
+              href="https://testnet-explorer.monad.xyz" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:text-blue-800 ml-1"
+            >
+              Explorer
+            </a>
           </p>
         </div>
       </div>

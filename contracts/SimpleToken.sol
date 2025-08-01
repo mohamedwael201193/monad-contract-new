@@ -19,16 +19,13 @@ contract SimpleToken {
     constructor(
         string memory _name,
         string memory _symbol,
-        uint8 _decimals,
-        uint256 _initialSupply
+        uint8 _decimals
     ) {
         name = _name;
         symbol = _symbol;
         decimals = _decimals;
-        totalSupply = _initialSupply * 10**_decimals;
+        totalSupply = 0; // Initialize totalSupply to 0
         owner = msg.sender;
-        balanceOf[msg.sender] = totalSupply;
-        emit Transfer(address(0), msg.sender, totalSupply);
     }
     
     function transfer(address _to, uint256 _value) public returns (bool) {
